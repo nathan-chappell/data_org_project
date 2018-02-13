@@ -131,6 +131,8 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
   using PageEntry = Entry<const Key, Data>;
   using Header    = FaginHeader;
   using Table     = FaginTable<Key, Hash, Data>;
+
+  class PageIterator;
   using iterator  = TableIterator<Key, Data, Table, PageIterator>;
 
   /*

@@ -235,13 +235,15 @@ template<
   >
 class LkTable : public HashInterface<Key, Data, Hash> {
  public:
-  using iterator     = TableIterator<Key, Data, LkPageEntry, 
-                              LkTable<Key, Data, Hash> >;
   using PageEntry    = LkPageEntry<Key, Data>;
   using Page         = LkPage<Key, Data>;
   using Hash         = LkHash<Key, Data>;
   using OverflowList = std::list<PageEntry>;
   using Header       = LkHeader;
+  using Table        = LkTable<Key, Data, Hash>;
+
+  class PageIterator;
+  using iterator     = TableIterator<Key, Data, LkPageEntry, PageIterator>;
 
 
   LkTable(storage_model* model,
@@ -523,6 +525,71 @@ class LkTable : public HashInterface<Key, Data, Hash> {
 
     return pageOverflow;
   }
+
+
+  class PageIterator : Public PageIteratorBase<Page, Table> {
+    public:
+      using PageIteratorBase<LeafNode, Table>::page_;
+      using PageIteratorBase<LeafNode, Table>::table_;
+
+      PageIterator& operator++() override {
+        storage_model* model_  = table_->model_;
+        const Directory& directory_ = table_->directory_;
+
+        if (directory_.size() == 0) {
+          dirIt = directory_.cend();
+          page_ = nullptr;
+        }
+        else if (page_ == nullptr)
+        {
+          dirIt = directory_.cbegin();
+          page_ = model_->load_page(dirIt->pageId);
+        }
+        else
+        {
+          if (dirIt == directory_->cend())
+          {
+            page_ = nullptr;
+          }
+          else
+          {
+            page_ = (Page*)model_->load_page(*++dirIt);
+          }
+        }
+        return *this;
+      }
+      PageIterator& operator--() override {
+        storage_model* model_  = table_->model_;
+        const Directory& directory_ = table_->directory_;
+
+        if (directory_.size() == 0) {
+          dirIt = directory_.cbegin();
+          page_ = nullptr;
+        }
+        else if (page_ == nullptr)
+        {
+          dirIt = --directory_.cend();
+          page_ = model_->load_page(dirIt->pageId);
+        }
+        else
+        {
+          if (dirIt == directory_->cbegin())
+          {
+            page_ = nullptr;
+          }
+          else
+          {
+            page_ = (Page*)model_->load_page(*--dirIt);
+          }
+        }
+        return *this;
+      }
+
+    private:
+
+      Directory::const_iterator dirIt;
+  };
+
 
   storage_model* model_;
   Hash           lkHash_;
