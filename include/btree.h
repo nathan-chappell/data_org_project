@@ -50,7 +50,7 @@ using BtreePage = HeaderArray<BtreeHeader, Entry<Key,Data>>;
 /*
  * SearchPath
  */
-template<typename Key, typename InteriorDataType>
+template<typename Key, typename InteriorDataType, typename Less_Equal>
 Path
 GetSearchPath(
     InteriorDataType start, 
@@ -60,6 +60,7 @@ GetSearchPath(
   using InteriorPage = BtreePage<Key,InteriorDataType>;
   using PageEntry    = typename InteriorPage::value_type;
 
+  Less_Equal less_equal;
   Path searchPath;
   auto pageHeader = (BtreeHeader*)load_page(start);
 
@@ -73,8 +74,8 @@ GetSearchPath(
           page->begin(),
           page->end(),
           PageEntry{key,InteriorDataType()},
-          [](const PageEntry& l, const PageEntry& r) { 
-            return l.key <= r.key; //TODO this comparison should be a template
+          [less_equal](const PageEntry& l, const PageEntry& r) { 
+            return less_equal(l.key, r.key);
           }
       );
 

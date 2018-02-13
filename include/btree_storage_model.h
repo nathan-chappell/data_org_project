@@ -59,7 +59,7 @@ class Btree /*: public HashInterface<Key, Data>*/ {
   Path
   BtreePath(const Key& key)
   {
-    return GetSearchPath<Key, PageId>(
+    return GetSearchPath<Key, PageId, LessThan>(
         rootId_,
         key, 
         [this](PageId pageId) { return this->model_->load_page(pageId); }
@@ -500,80 +500,12 @@ class Btree /*: public HashInterface<Key, Data>*/ {
     if (header->IsLeaf()) return ((LeafNode*)header)->begin() == entry;
     else return ((InteriorNode*)header)->begin() == entry;
   }
-  /*
-   * Successor
-   */
-  iterator&
-  Successor(iterator& it)
-  {
-      }
-  /*
-   * Predecessor
-   */
-  iterator&
-  Predecessor(iterator& it)
-  {
-    Path searchPath = GetSearchPath(
-        rootId_,
-        it->entry_->key, 
-        [this](PageId pageId) { return this->model_->load_page(pageId); }
-    );
-
-    LeafNode* leaf = (LeafEntry*)searchPath.back().header;
-
-    if (searchPath.back().childEntry != leaf->begin()) 
-    {
-      --it->entry_;
-      return it;
-    }
-
-    auto branch = std::find_if(
-        searchPath.begin(),
-        searchPath.end(),
-        [](const PathVertex& v) { 
-          return !IsBegin(v.childEntry, v.header);
-        }
-    );
-
-    it->page_ = GetMinSubtree(*--branch);
-    it->entry_ = it->page_->begin();
-    return it;
-  }
 
   iterator end() { return {nullptr, {nullptr, this}}; }
   const iterator end() const { return {nullptr, nullptr, this}; }
 
  private:
 
-  /*
-   * GetMinSubtree //TODO duplication here and in the iterator
-   */
-  LeafNode*
-  GetMinSubtree(PathVertex v) //TODO Better interface here..
-  {
-    while (!v.header->IsLeaf()) {
-      PageId pageId = ((InteriorEntry*)v.childEntry)->data;
-      v.header = load_page(pageId);
-      v.childEntry = v.header + 1;
-    }
-
-    return (LeafNode*)v.header;
-  }
-  /*
-   * GetMaxAfter
-   */
-  LeafNode*
-  GetMaxAfter(PathVertex v)
-  {
-    while (!v.header->IsLeaf()) {
-      PageId pageId = ((InteriorEntry*)v.childEntry)->data;
-      v.header = load_page(pageId);
-      v.childEntry = v.header + 1;
-    }
-
-    return (LeafNode*)v.header;
-  }
- 
   /*
    * load_page
    */
@@ -608,7 +540,7 @@ class Btree /*: public HashInterface<Key, Data>*/ {
         }
         else
         {
-          Path searchPath = GetSearchPath<Key,PageId>(
+          Path searchPath = GetSearchPath<Key,PageId,LessThan>(
               rootId_,
               page_->begin()->key,
               [model_](PageId pageId) { return model_->load_page(pageId); }
@@ -626,8 +558,8 @@ class Btree /*: public HashInterface<Key, Data>*/ {
           }
           else
           {
-            //NextChildEntry(*branch.base()); TODO
-            //page_ = (LeafNode*) GetMinSubtree(*branch.base());
+            NextChildEntry(*branch.base());
+            page_ = (LeafNode*)GetMinSubtree(*branch.base());
           }
         }
       }
@@ -635,7 +567,7 @@ class Btree /*: public HashInterface<Key, Data>*/ {
         while (!branch.header->IsLeaf())
         {
           PageId nextPage = ((InteriorEntry*)branch.childEntry)->data;
-          branch.header = table_->model_->load_page(nextPage);
+          branch.header = (Page*)table_->model_->load_page(nextPage);
           branch.childEntry = ((InteriorNode*)branch.header)->begin();
         }
         return branch.header;
@@ -646,14 +578,12 @@ class Btree /*: public HashInterface<Key, Data>*/ {
 
         if (page_ == nullptr)
         {
-          //page_ = (Page*)model_->load_page(rootId_);
-          //page_ = GetMaxSubtree(
-              //PathVertex{page_, page_->header()+1}
-              //); TODO
+          page_ = (LeafNode*)model_->load_page(rootId_);
+          page_ = (LeafNode*)GetMaxSubtree({(Page*)page_, page_->header()+1});
         }
         else
         {
-          Path searchPath = GetSearchPath<Key, PageId>(
+          Path searchPath = GetSearchPath<Key, PageId, LessThan>(
               rootId_,
               page_->begin()->key,
               [model_](PageId pageId) { return model_->load_page(pageId); }

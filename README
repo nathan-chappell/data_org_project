@@ -1,0 +1,16 @@
+Data Organization Project.
+
+Here is an implementation of a Btree, and hash tables utilizing hash
+schemes of Larson and Kalja, and Fagin.
+
+All of the structures are implemented with the intention that they will be
+used with a "storage_model" (see include/storage_model.h).  The idea is
+that the storage_model represents secondary storage, and the structures
+interface with it to read and write data.
+
+The program has been written, but not checked for correctness.
+
+The program needs to have a "page-cache" implemented for the implementation
+to make sense.  Basically, the "reference managers" need to put a counter
+into iterators to make sure that pages aren't released while being
+accessed...
