@@ -26,6 +26,14 @@ template<
   typename HashFunction = UniHash<Key>,
   typename LessThan = std::less<Key>
   >
+class BtreeIterator;
+
+template<
+  typename Key,
+  typename Data,
+  typename HashFunction = UniHash<Key>,
+  typename LessThan = std::less<Key>
+  >
 class Btree : public HashInterface<Key, Data, HashFunction> {
 
  public:
@@ -39,7 +47,9 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   using Header = BtreeHeader;
   using Pages = std::vector<Header*>;
 
-  using iterator = BtreeIterator<Key, Data, Entry, Btree>;
+  using Table = Btree<Key, Data, HashFunction, LessThan>;
+
+  using iterator = TableIterator<Key, Data, Table, PageIterator>;
 
   /*
    * Btree
@@ -250,7 +260,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   {
     auto parentIt  = std::prev(mergeNode);
     auto parent    = (InteriorNode*)parentIt->header;
-    auto leftEntry = (InteriorEntry*)parent->leftEntry;
+    auto leftEntry = (InteriorEntry*)parent->childEntry;
 
     if (leftEntry == parent->end()) --leftEntry;
 
@@ -270,6 +280,19 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
 
       MergeNode(parent, leftEntry, left, right);
     }
+  }
+  /*
+   * CanEraseKey
+   */
+  bool CanEraseKey(const Path& path, const Key& key)
+  {
+    BtreeHeader* leaf = path.back().header;
+    if (leaf->IsHalf()) return true;
+
+    LeafEntry* ePoint = GetNext(leaf, key);
+    if (!IsMatch(leaf,ePoint,key)) return true;
+
+    return false;
   }
   /*
    * PrepareErasePath
@@ -304,17 +327,14 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   {
     Path searchPath = PrepareErasePath(key);
 
-    LeafNode* leaf = searchPath.back().header;
+    auto leaf = (LeafNode*)searchPath.back().header;
 
     LeafEntry* ePoint = GetNext(leaf, key);
 
     if (!IsMatch(leaf,ePoint,key)) return false;
 
-    if (leaf->size() > max_size() / 2) {
-      leaf->erase(ePoint);
-      return true;
-    }
-
+    leaf->erase(ePoint);
+    return true;
   }
   /*
    * insert
@@ -469,8 +489,8 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   bool 
   IsEnd(const void* entry, const Header* header) const
   {
-    if (header->IsLeaf()) return (LeafNode*)header->end() == entry;
-    else return (InteriorNode*)header->end() == entry;
+    if (header->IsLeaf()) return ((LeafNode*)header)->end() == entry;
+    else return ((InteriorNode*)header)->end() == entry;
   }
   /*
    * IsBegin
@@ -478,59 +498,56 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   bool 
   IsBegin(const void* entry, const Header* header) const
   {
-    if (header->IsLeaf()) return (LeafNode*)header->begin() == entry;
-    else return (InteriorNode*)header->begin() == entry;
+    if (header->IsLeaf()) return ((LeafNode*)header)->begin() == entry;
+    else return ((InteriorNode*)header)->begin() == entry;
   }
   /*
    * Successor
    */
-  iterator
-  Successor(const Key& key)
+  iterator&
+  Successor(iterator& it)
   {
-    Path searchPath = GetSearchPath(
-        rootId_,
-        key, 
-        [model_](PageId pageId) { return model_->load_page(pageId); }
-    );
-
-    auto branch = std::find_if(
-        searchPath.begin();
-        searchPath.end();
-        [](const PathVertex& v) { return !IsEnd(v.childEntry, v.header_array); }
-    );
-
-    LeafNode* next = GetMinAfter(*++branch);
-    return {next->begin(), next, this};
-  }
+      }
   /*
    * Predecessor
    */
-  iterator
-  Predecessor(const Key& key)
+  iterator&
+  Predecessor(iterator& it)
   {
     Path searchPath = GetSearchPath(
         rootId_,
-        key, 
-        [model_](PageId pageId) { return model_->load_page(pageId); }
+        it->entry_->key, 
+        [this](PageId pageId) { return this->model_->load_page(pageId); }
     );
+
+    LeafNode* leaf = (LeafEntry*)searchPath.back().header;
+
+    if (searchPath.back().childEntry != leaf->begin()) 
+    {
+      --it->entry_;
+      return it;
+    }
 
     auto branch = std::find_if(
-        searchPath.begin();
-        searchPath.end();
-        [](const PathVertex& v) { return !IsBegin(v.childEntry, v.header_array); }
+        searchPath.begin(),
+        searchPath.end(),
+        [](const PathVertex& v) { 
+          return !IsBegin(v.childEntry, v.header);
+        }
     );
 
-    LeafNode* next = GetMinAfter(*--branch);
-    return {next->begin(), next, this};
+    it->page_ = GetMinSubtree(*--branch);
+    it->entry_ = it->page_->begin();
+    return it;
   }
-
+  
  private:
 
   /*
-   * GetMinAfter
+   * GetMinSubtree
    */
   LeafNode*
-  GetMinAfter(PathVertex v)
+  GetMinSubtree(PathVertex v) //TODO Better interface here..
   {
     while (!v.header->IsLeaf()) {
       PageId pageId = ((InteriorEntry*)v.childEntry)->data;
@@ -567,26 +584,121 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   PageId         rootId_;
   storage_model* model_;
   size_t         size_;
+
+ public:
+
+  class PageIterator : public PageIteratorBase<LeafNode, Table> {
+    public:
+      using PageIteratorBase<LeafNode, Table>::page_;
+      using PageIteratorBase<LeafNode, Table>::table_;
+
+      PageIterator& operator++() override {
+        storage_model* model_  = table_->model_;
+        PageId         rootId_ = table_->rootId_;
+
+        if (page_ == nullptr)
+        {
+          page_ = model_->load_page(rootId_);
+        }
+        else
+        {
+          Path searchPath = GetSearchPath(
+              rootId_,
+              page_->begin()->key;
+              [table_](PageId pageId) { return table_->model_->load_page(pageId); }
+              );
+
+          auto branch = std::find_if(
+              searchPath.rbegin(),
+              searchPath.rend(),
+              [](const PathVertex& v) { return !IsEnd(v.childEntry, v.header); }
+              );
+
+          if (branch == searchPath.rend())
+          {
+            page_ =  nullptr;
+          }
+          else
+          {
+            NextChildEntry(branch);
+            while (!branch->header->IsLeaf())
+            {
+              PageId nextPage = ((InteriorEntry*)branch->childEntry)->data;
+              branch->header = table_->model_->load_page(nextPage);
+              branch->childEntry = ((InteriorPage*)branch->header)->begin();
+            }
+            page_ = branch->header;
+          }
+        }
+        return *this;
+      }
+      PageIterator& operator--() override {
+        storage_model* model_  = table_->model_;
+        PageId         rootId_ = table_->rootId_;
+
+        if (page_ == nullptr)
+        {
+          page_ = model_->load_page(rootId_);
+        }
+        else
+        {
+          Path searchPath = GetSearchPath(
+              rootId_,
+              page_->begin()->key;
+              [table_](PageId pageId) { return table_->model_->load_page(pageId); }
+              );
+
+          auto branch = std::find_if(
+              searchPath.rbegin(),
+              searchPath.rend(),
+              [](const PathVertex& v) { return !IsBegin(v.childEntry, v.header); }
+              );
+
+          if (branch == searchPath.rend())
+          {
+            page_ =  nullptr;
+          }
+          else
+          {
+            PrevChildEntry(branch);
+            while (!branch->header->IsLeaf())
+            {
+              PageId nextPage = ((InteriorEntry*)branch->childEntry)->data;
+              branch->header = table_->model_->load_page(nextPage);
+              branch->childEntry = --((InteriorPage*)branch->header)->end();
+            }
+            page_ = branch->header;
+          }
+        }
+        return *this;
+      }
+
+     private:
+
+      void AdvanceChildEntry(PathVertex& v) {
+        if (v.header->IsLeaf())
+        {
+          ++((LeafEntry*)v.childEntry);
+        }
+        else
+        {
+          ++((InteriorEntry*)v.childEntry);
+        }
+      }
+      void PrevChildEntry(PathVertex& v) {
+        if (v.header->IsLeaf())
+        {
+          --((LeafEntry*)v.childEntry);
+        }
+        else
+        {
+          --((InteriorEntry*)v.childEntry);
+        }
+      }
+  };
+
 }; //struct Btree
 
-template<typename Key, typename Data>
-class BtreeIterator : public TableIteratorBase<
-  Key, Data, Entry, FaginTable<Key,Data,Hash>
-  > {
-
-  using iterator = BtreeIterator<Key,Data>;
-
-  iterator& operator++() {
-    if (entry_ != page_->end()) 
-    {
-      ++entry_;
-      return *entry_;
-    }
-    
-
-  }
-  iterator& operator--()
-};
 
 
 }; //data_org_project_names

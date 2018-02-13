@@ -33,8 +33,6 @@ struct FaginHeader : HeaderBase {
 template<typename Key, typename Data>
 using FaginPage = HeaderArray<FaginHeader, Entry<const Key,Data>>;
 
-template<typename Key, typename Data>
-class FaginIterator;
 
 template<
   typename Key,
@@ -132,7 +130,8 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
   using Page      = FaginPage<Key, Data>;
   using PageEntry = Entry<const Key, Data>;
   using Header    = FaginHeader;
-  using iterator  = FaginIterator<Key, Data, Hash>;
+  using Table     = FaginTable<Key, Hash, Data>;
+  using iterator  = TableIterator<Key, Data, Table, PageIterator>;
 
   /*
    * FaginTable
@@ -229,7 +228,41 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
     return {page, page->end(), this};
   }
 
-  friend class FaginIterator<Key, Data, Hash>;
+
+  /*
+   * Successor
+   */
+  iterator&
+  Predecessor(iterator& it)
+  {
+    if (it.entry_ != it.page_->begin())
+    {
+      --it.entry_;
+    }
+    else
+    {
+      auto dirIt = NextUnique(
+          directory_->DirRBegin(),
+          directory_->DirREnd(),
+          it.page_->header()->pageId
+      );
+
+      if (dirIt == directory_->DirREnd())
+      {
+        it.page_ = nullptr;
+        it.entry_ = nullptr;
+      }
+      else
+      {
+        it.page_ = (Page*)model_->load_page(*dirIt);
+        it.entry_ = it.page_->begin();
+      }
+    }
+
+    return *this;
+  }
+
+  friend class iterator;
 
  private:
 
@@ -266,74 +299,80 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
     }
   }
 
+
+  class PageIterator : Public PageIteratorBase<Page, Table> {
+    public:
+      using PageIteratorBase<LeafNode, Table>::page_;
+      using PageIteratorBase<LeafNode, Table>::table_;
+
+      PageIterator& operator++() override {
+        storage_model* model_  = table_->model_;
+        FaginDirectory* directory_ = table_->directory_;
+
+        if (directory_->DirBegin() == directory_.DirEnd()) {
+          page_ = nullptr;
+        }
+        else if (page_ == nullptr)
+        {
+          page_ = model_->load_page(*directory_.DirBegin());
+        }
+        else
+        {
+          auto dirIt = NextUnique(
+              directory_->DirBegin(),
+              directory_->DirEnd(),
+              page_->header()->pageId
+              );
+
+          if (dirIt == directory_->DirEnd())
+          {
+            page_ = nullptr;
+          }
+          else
+          {
+            page_ = (Page*)model_->load_page(*dirIt);
+          }
+        }
+        return *this;
+      }
+      PageIterator& operator--() override {
+        storage_model* model_  = table_->model_;
+        FaginDirectory* directory_ = table_->directory_;
+
+        if (directory_->DirRBegin() == directory_.DirREnd()) {
+          page_ = nullptr;
+        }
+        else if (page_ == nullptr)
+        {
+          page_ = model_->load_page(*directory_.DirRBegin());
+        }
+        else
+        {
+          auto dirIt = NextUnique(
+              directory_->DirRBegin(),
+              directory_->DirREnd(),
+              page_->header()->pageId
+              );
+
+          if (dirIt == directory_->DirREnd())
+          {
+            page_ = nullptr;
+          }
+          else
+          {
+            page_ = (Page*)model_->load_page(*dirIt);
+          }
+        }
+        return *this;
+      }
+ 
+  };
+
+
   storage_model*            model_;
   FaginDirectory<Key, Hash> directory_;
   size_t                    size_;
 };
 
-
-template<typename Key, typename Data, Hash>
-class FaginIterator : 
-  public TableIteratorBase<
-  Key, Data, Entry, FaginTable<Key,Data,Hash>
-  > {
-  using iterator          = FaginIterator<const Key, Data, Hash>;
-  using iterator_category = std::bidirectional_iterator_tag;
-
-  iterator& operator++() {
-    if (entry_ != page_->end()) {
-
-      ++entry_;
-
-    } else {
-
-      auto dirIt = NextUnique(
-          table_->directory_->DirBegin(),
-          table_->directory_->DirEnd(),
-          page_->header()->pageId
-      );
-
-      if (dirIt == table_->directory_->DirEnd()) {
-
-        page_ = nullptr;
-        entry_ = nullptr;
-
-      } else {
-
-        page_ = (Page*)table_->model_->load_page(*dirIt);
-        entry_ = page_->begin();
-      }
-    }
-
-    return *this;
-  }
-  iterator& operator--() {
-    if (entry_ != page_->begin()) {
-
-      --entry_;
-
-    } else {
-
-      auto dirIt = NextUnique(
-          table_->directory_->DirRBegin(),
-          table_->directory_->DirREnd(),
-          page_->header()->pageId
-      );
-
-      if (dirIt == table_->directory_->DirREnd()) {
-
-        page_ = nullptr;
-        entry_ = nullptr;
-
-      } else {
-
-        page_ = (Page*)table_->model_->load_page(*dirIt);
-        entry_ = page_->begin();
-      }
-    }
-
-    return *this;
-  }
-};
 
 }; //data_org_project_names 

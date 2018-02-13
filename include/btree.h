@@ -68,6 +68,7 @@ GetSearchPath(
   {
     auto page = (InteriorPage*)pageHeader;
 
+
     auto nextEntry = 
       std::lower_bound(
           page->begin(),

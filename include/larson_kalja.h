@@ -235,7 +235,8 @@ template<
   >
 class LkTable : public HashInterface<Key, Data, Hash> {
  public:
-  using iterator     = LkTableIterator<Key, Data>;
+  using iterator     = TableIterator<Key, Data, LkPageEntry, 
+                              LkTable<Key, Data, Hash> >;
   using PageEntry    = LkPageEntry<Key, Data>;
   using Page         = LkPage<Key, Data>;
   using Hash         = LkHash<Key, Data>;
@@ -356,6 +357,69 @@ class LkTable : public HashInterface<Key, Data, Hash> {
     }
     return str + "\n";
   }
+  /*
+   * Successor
+   */
+  iterator& Successor(iterator& it)
+  {
+    if (it.entry_ != it.page_->end()) 
+    {
+      ++it.entry_;
+      return it;
+    } 
+
+    auto dirIt = std::find_if(
+        directory_.begin(),
+        directory_.end(),
+        [it](PageId pageId) { return pageId == it.pageId; }
+    );
+    
+    if (dirIt != directory_.end()) 
+    {
+      ++dirIt;
+      it.page_ = (Page*)model_->load_page(*dirIt);
+      it.entry_ = it.page_->begin();
+    }
+    else
+    {
+      it.entry_ = nullptr;
+      it.page_  = nullptr;
+    }
+
+    return it;
+  }
+  /*
+   * Predecessor
+   */
+  iterator& Predecessor(iterator& it)
+  {
+    if (it.entry_ != it.page_->begin()) 
+    {
+      --it.entry_;
+      return it;
+    } 
+
+    auto dirIt = std::find_if(
+        directory_.rbegin(),
+        directory_.rend(),
+        [it](PageId pageId) { return pageId == it.pageId; }
+    );
+    
+    if (dirIt != directory_.begin()) 
+    {
+      --dirIt;
+      it.page_ = (Page*)model_->load_page(*dirIt);
+      it.entry_ = --it.page_->end();
+    }
+    else
+    {
+      it.entry_ = nullptr;
+      it.page_  = nullptr;
+    }
+
+    return it;
+  }
+
 
   inline size_t size()       const { return size_; }
   inline size_t capacity()   const { return capacity_; }
@@ -467,95 +531,5 @@ class LkTable : public HashInterface<Key, Data, Hash> {
   size_t         capacity_;
 };
 
-
-template<typename Key, typename Data, >
-class LkTableIterator :
-  public TableIteratorBase<
-  Key, Data, LkPageEntry, FaginTable<Key,Data,Hash>
-  > {
-  using iterator = LkTableIterator<Key, Data>;
-
-  LkTableIterator() : entry_(nullptr) {}
-
-  reference       operator*()        { return *entry_; }
-  const_reference operator*()  const { return *entry_; }
-  pointer         operator->()       { return entry_; }
-  const_pointer   operator->() const { return entry_; }
-  bool operator==(const iterator& it) const {
-    return entry_ == it.entry_;
-  }
-  bool operator!=(const iterator& it) const {
-    return !(entry_ == it.entry_);
-  }
-  iterator& operator++() {
-    if (entry_ != page_->end()) {
-
-      ++entry_;
-      return *this;
-    } 
-
-    auto dirIt = std::find_if(
-        table->directory_.begin(),
-        table->directory_.end(),
-        [page](PageId pageId) { return pageId == page->pageId; }
-    );
-    
-    if (dirIt_ != table_->directory_.end()) {
-
-      ++dirIt_;
-      page = (Page*)table_->model_->load_page(*dirIt);
-      entry_ = page_->begin();
-
-    } else {
-
-      entry_ = nullptr;
-      page_  = nullptr;
-    }
-
-    return *this;
-  }
-  iterator& operator--() {
-    if (entry_ != page_->begin()) {
-
-      ++entry_;
-      return *this;
-
-    } 
-
-    auto dirIt = std::find_if(
-        table->directory_.rbegin(),
-        table->directory_.rend(),
-        [page](PageId pageId) { return pageId == page->pageId; }
-    );
-    
-    if (dirIt_ != table_->directory_.rend()) {
-
-      ++dirIt_; //reverse iterator!
-      page = (Page*)table_->model_->load_page(*dirIt);
-      entry_ = page_->begin();
-
-    } else {
-
-      entry_ = nullptr;
-      page_  = nullptr;
-    }
-
-    return *this;
-  }
-  iterator operator++(int) {
-    LkTableIterator tmp = *this;
-    operator++();
-    return tmp;
-  }
-  iterator operator--(int) {
-    LkTableIterator tmp = *this;
-    operator--();
-    return tmp;
-  }
-
- private:
-
-  Directory::iterator  dirIt_;
-};
 
 }; //data_org_project_names
