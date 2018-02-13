@@ -240,10 +240,10 @@ struct Entry {
   Key key;
   Data data;
 
-  std::string ToString(const Entry<Key,Data>& e) 
+  std::string ToString() const
   {
-    return "{key:" + std::to_string(e.key) + 
-            ", data:" + std::to_string(e.data) + "}";
+    return "{key:" + std::to_string(key) + 
+            ", data:" + std::to_string(data) + "}";
   }
 };
 
@@ -260,7 +260,7 @@ SpliceLastN(
 {
   //steal the last n
   T* whereFrom = fromArray->end() - n;
-  std::move(whereFrom, fromArray->end() + 1, toArray.end());
+  std::move(whereFrom, fromArray->end() + 1, toArray->end());
 
   //adjust sizes
   fromArray->header()->size -= n;

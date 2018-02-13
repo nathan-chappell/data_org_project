@@ -59,7 +59,7 @@ using RInput = std::vector<RandomPair>;
  * Verify
  */
 template<typename Table>
-bool Verify(const Verifier& verifier, const Table& table)
+bool Verify(const Verifier& verifier, Table& table)
 {
   bool testResult = true;
 
@@ -67,16 +67,16 @@ bool Verify(const Verifier& verifier, const Table& table)
 
     auto searchResult = table.find(correctEntry.first);
 
-    if (!searchResult.first)
+    if (searchResult == table.end())
     {
       fprintf(errFile, "Couldn't find: %zu\n", correctEntry.first);
       testResult = false;
 
-    } else if (searchResult.second.key  != correctEntry.first ||
-               searchResult.second.data != correctEntry.second)
+    } else if (searchResult->key  != correctEntry.first ||
+               searchResult->data != correctEntry.second)
     {
       fprintf(errFile, "wrong data: %s\n", 
-                        searchResult.second.ToString().c_str());
+                        searchResult->ToString().c_str());
       fprintf(errFile, "should be: key=%zu, data=%zu\n", 
                         correctEntry.first, correctEntry.second);
                         

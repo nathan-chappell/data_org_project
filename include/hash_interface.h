@@ -36,44 +36,47 @@ class TableIterator {
 
  public:
 
-  using value_type      = Entry<const Key, Data>;
+  using value_type      = Entry<Key, Data>; //TODO "Key" -> "const Key"
   using pointer         = value_type*;
   using reference       = value_type&;
   using const_pointer   = const pointer;
   using const_reference = const reference;
   using difference_type = std::ptrdiff_t;
   using iterator_category = std::bidirectional_iterator_tag;
-  using Table           = typename PageIterator::TableType;
-  using iterator        = TableIterator<Key, Data, Entry, Table>;
-
-  using Page  = HeaderArray<typename Table::Header, value_type>;
+  using iterator        = TableIterator<Key, Data, Entry, PageIterator>;
 
   reference       operator*()        { return *entry_; }
   const_reference operator*()  const { return *entry_; }
   pointer         operator->()       { return entry_; }
   const_pointer   operator->() const { return entry_; }
   iterator&       operator++() {
-    if (entry_ != page_->end())
+    if (pageIt_.get() == nullptr) {
+      ++pageIt_;
+    }
+    if (entry_ != pageIt_->end())
     {
       ++entry_;
     }
     else
     {
-      ++page_;
-      if (page_->get() != nullptr) entry_ = page_->begin();
+      ++pageIt_;
+      if (pageIt_.get() != nullptr) entry_ = pageIt_->begin();
       else entry_ = nullptr;
     }
     return *this;
   }      
   iterator&       operator--() {
-    if (entry_ != page_->begin())
+    if (pageIt_.get() == nullptr) {
+      --pageIt_;
+    }
+    if (entry_ != pageIt_->begin())
     {
       --entry_;
     }
     else
     {
-      --page_;
-      if (page_->get() != nullptr) entry_ = --page_->end();
+      --pageIt_;
+      if (pageIt_.get() != nullptr) entry_ = --pageIt_->end();
       else entry_ = nullptr;
     }
     return *this;
@@ -88,53 +91,54 @@ class TableIterator {
     operator--();
     return prev;
   }
-  bool operator==(const TableIteratorBase& it) {
-    return entry_ == it.entry_ && page_ == it.page_;
+  bool operator==(const iterator& it) {
+    return entry_ == it.entry_ && pageIt_ == it.pageIt_;
   }
-  bool operator!=(const TableIteratorBase& it) {
+  bool operator!=(const iterator& it) {
     return !(it == *this);
   }
 
-  friend Table;
+  TableIterator(pointer entry, PageIterator page) :
+    entry_(entry), pageIt_(page) {}
+
   friend PageIterator;
 
  protected:
 
   pointer      entry_;
-  PageIterator page_;
+  PageIterator pageIt_;
 };
 
 /*
  * Boilerplate for Table's PageIterators
  */
-template<typename Page, typename Table>
+template<typename PageType, typename TableType>
 class PageIteratorBase {
   public:
+    using Table = TableType;
+    using Page  = PageType;
+
     Page&       operator*()        { return *page_; }
     Page*       operator->()       { return page_; }
+    Page*       get()              { return page_; }
     const Page& operator*()  const { return *page_; }
     const Page* operator->() const { return page_; }
     bool operator==(const PageIteratorBase& l) { 
-      return l.page_ == page_ && l.table_ == btree; 
+      return l.page_ == page_ && l.table_ == table_; 
     }
     bool operator!=(const PageIteratorBase& l) { 
       return !(*this == l); 
     }
-    PageIteratorBase operator++(int) {
-      auto tmp = *this;
-      this->operator++();
-      return tmp;
-    }
-    PageIteratorBase operator--(int) {
-      auto tmp = *this;
-      this->operator--();
-      return tmp;
-    }
+    PageIteratorBase(Page* page, Table* table) :
+      page_(page), table_(table) {}
 
-    virtual PageIteratorBase& operator++() = 0;
-    virtual PageIteratorBase& operator--() = 0;
+    PageIteratorBase() : page_(nullptr), table_(nullptr) {}
 
-   private:
+    virtual void operator++() = 0;
+    virtual void operator--() = 0;
+
+   protected:
+
     Page* page_;
     Table* table_;
 };
@@ -144,8 +148,7 @@ class PageIteratorBase {
  */
 template<
   typename Key,
-  typename Data,
-  typename HashFunction
+  typename Data
   >
 class HashInterface {
  public:

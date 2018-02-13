@@ -55,7 +55,7 @@ Path
 GetSearchPath(
     InteriorDataType start, 
     const Key& key, 
-    char*(*load_page)(InteriorDataType)) 
+    std::function<char*(InteriorDataType)> load_page) 
 {
   using InteriorPage = BtreePage<Key,InteriorDataType>;
   using PageEntry    = typename InteriorPage::value_type;
@@ -68,13 +68,14 @@ GetSearchPath(
   {
     auto page = (InteriorPage*)pageHeader;
 
-
     auto nextEntry = 
       std::lower_bound(
           page->begin(),
           page->end(),
-          key,
-          [key](const PageEntry& entry) { return entry.key <= key; }
+          PageEntry{key,InteriorDataType()},
+          [](const PageEntry& l, const PageEntry& r) { 
+            return l.key <= r.key; //TODO this comparison should be a template
+          }
       );
 
     searchPath.push_back({pageHeader, nextEntry});
@@ -103,7 +104,7 @@ SplitBtreeNode(
   newPage->CopyHeight(childPage);
 
   //last n/2 go from childPage to newPage
-  SpliceLastN<Entry>( 
+  SpliceLastN( 
       (BtreePage<Key,Data1>*)newPage,
       childPage,
       childPage->size()/2
@@ -111,7 +112,7 @@ SplitBtreeNode(
   
   parentNode->insert(childEntry, *childEntry);
 
-  childEntry->key = (--childPage->end())->key;
+  childEntry->key = (std::prev(childPage->end()))->key;
 
   ++childEntry; //childEntry now points to "new entry"
 
@@ -138,7 +139,7 @@ MergeNode(
 
   leftEntry->key = hiEntry->key;
 
-  parent->erase(rightPage);
+  parent->erase(hiEntry);
 }
 
 }; // data_org_project_names

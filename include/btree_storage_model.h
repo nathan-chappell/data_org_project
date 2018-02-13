@@ -26,15 +26,7 @@ template<
   typename HashFunction = UniHash<Key>,
   typename LessThan = std::less<Key>
   >
-class BtreeIterator;
-
-template<
-  typename Key,
-  typename Data,
-  typename HashFunction = UniHash<Key>,
-  typename LessThan = std::less<Key>
-  >
-class Btree : public HashInterface<Key, Data, HashFunction> {
+class Btree /*: public HashInterface<Key, Data>*/ {
 
  public:
 
@@ -45,11 +37,14 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   using InteriorNode  = BtreePage<Key,PageId>;
 
   using Header = BtreeHeader;
-  using Pages = std::vector<Header*>;
+  using Page = Header;
+  using Pages = std::vector<Page*>;
 
   using Table = Btree<Key, Data, HashFunction, LessThan>;
 
-  using iterator = TableIterator<Key, Data, Table, PageIterator>;
+  class PageIterator;
+  using iterator = TableIterator<Key, Data, Entry, PageIterator>;
+  friend iterator;
 
   /*
    * Btree
@@ -64,7 +59,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   Path
   BtreePath(const Key& key)
   {
-    return GetSearchPath(
+    return GetSearchPath<Key, PageId>(
         rootId_,
         key, 
         [this](PageId pageId) { return this->model_->load_page(pageId); }
@@ -77,13 +72,14 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   GetNext(LeafNode* leaf, const Key& key)
   {
     LeafEntry dummyEntry {key, Data()};
+    auto lt = LessThan();
 
     return std::lower_bound(
         leaf->begin(),
         leaf->end(),
         dummyEntry,
-        [](const LeafNode& l, const LeafNode& r) { 
-          return LessThan(l.key, r.key); 
+        [lt](const LeafEntry& l, const LeafEntry& r) { 
+          return lt(l.key, r.key); 
         }
     );
   }
@@ -110,15 +106,16 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
    * Find
    */
   iterator
-  find(const Key& key) const override
+  find(const Key& key) //override
   {
     Path searchPath = BtreePath(key);
     auto leafNode = (LeafNode*)searchPath.back().header;
 
     LeafEntry* leafMatch = GetNext(leafNode, key);
 
-    if (IsMatch(leafNode, leafMatch, key)) return {true, leafMatch->data};
-    else return {false, Data()};
+    if (IsMatch(leafNode, leafMatch, key)) 
+         return {leafMatch, PageIterator(leafNode, this)};
+    else return {nullptr, {nullptr, this}};
   }
   /*
    * Page Info (struct)
@@ -136,7 +133,9 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
     PageId newPageId    = model_->create_page();
     Header* header = load_page(newPageId);
 
-    InitializeHeader<LeafEntry>(*header, model_->get_page_size(), newPageId);
+    InitializeHeader<BtreeHeader,LeafEntry>(
+        header, model_->get_page_size(), newPageId
+        );
     header->nodeHeight = 0;
 
     return {newPageId, header};
@@ -156,7 +155,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
       SplitBtreeNode(
           parentNode,
           childEntry,
-          (LeafEntry*)childHeader,
+          (LeafNode*)childHeader,
           newPage.header
       );
 
@@ -165,7 +164,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
       SplitBtreeNode(
           parentNode,
           childEntry,
-          (InteriorEntry*)childHeader,
+          (InteriorNode*)childHeader,
           newPage.header
       );
     }
@@ -176,7 +175,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   void SplitRoot() 
   {
     Header* rootHeader  = load_page(rootId_);
-    PageInfo     newRootPage = CreateNewPage();
+    PageInfo newRootPage = CreateNewPage();
 
     newRootPage.header->nodeHeight = rootHeader->nodeHeight + 1;
 
@@ -201,7 +200,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   {
     auto leaf = (LeafNode*)path.back().header;
     
-    if (!leaf->IsFull()) return true;
+    if (!((Header*)leaf)->IsFull()) return true;
 
     LeafEntry* iPoint = GetNext(leaf, key);
 
@@ -236,7 +235,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
       auto splitBegin = std::find_if(
           searchPath.rbegin(),
           searchPath.rend(),
-          [](const Header* header) { return !header->IsFull(); }
+          [](const PathVertex& v) { return !v.header->IsFull(); }
       );
 
       if (splitBegin == searchPath.rend()) SplitRoot();
@@ -260,7 +259,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   {
     auto parentIt  = std::prev(mergeNode);
     auto parent    = (InteriorNode*)parentIt->header;
-    auto leftEntry = (InteriorEntry*)parent->childEntry;
+    auto leftEntry = (InteriorEntry*)parentIt->childEntry;
 
     if (leftEntry == parent->end()) --leftEntry;
 
@@ -286,8 +285,8 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
    */
   bool CanEraseKey(const Path& path, const Key& key)
   {
-    BtreeHeader* leaf = path.back().header;
-    if (leaf->IsHalf()) return true;
+    auto leaf = (LeafNode*)path.back().header;
+    if (leaf->header()->IsHalf()) return true;
 
     LeafEntry* ePoint = GetNext(leaf, key);
     if (!IsMatch(leaf,ePoint,key)) return true;
@@ -307,12 +306,12 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
       auto mergeBegin = std::find_if(
           searchPath.rbegin(),
           searchPath.rend(),
-          [](const Header* header) { return !header->IsHalf(); }
+          [](const PathVertex& v) { return !v.header->IsHalf(); }
       );
 
       if (mergeBegin == searchPath.rend() &&
           mergeBegin->header->size == 1) MergeRoot();
-      else Merge(searchPath, mergeBegin);
+      else Merge(searchPath, mergeBegin.base());
 
       searchPath = BtreePath(key);
     }
@@ -323,7 +322,7 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
    * erase
    */
   bool 
-  erase(const Key& key) override
+  erase(const Key& key) //override
   {
     Path searchPath = PrepareErasePath(key);
 
@@ -340,13 +339,13 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
    * insert
    */
   void
-  insert(const Key& key, const Data& data) override
+  insert(const Key& key, const Data& data) //override
   {
     LeafEntry iEntry = {key, data};
 
     Path searchPath = PrepareInsertPath(key);
 
-    auto leaf = (LeafNode*)searchPath.back();
+    auto leaf = (LeafNode*)searchPath.back().header;
     
     LeafEntry* iPoint = GetNext(leaf, key);
 
@@ -486,8 +485,8 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   /*
    * IsEnd
    */
-  bool 
-  IsEnd(const void* entry, const Header* header) const
+  static bool 
+  IsEnd(const void* entry, const Header* header)
   {
     if (header->IsLeaf()) return ((LeafNode*)header)->end() == entry;
     else return ((InteriorNode*)header)->end() == entry;
@@ -495,8 +494,8 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
   /*
    * IsBegin
    */
-  bool 
-  IsBegin(const void* entry, const Header* header) const
+  static bool 
+  IsBegin(const void* entry, const Header* header)
   {
     if (header->IsLeaf()) return ((LeafNode*)header)->begin() == entry;
     else return ((InteriorNode*)header)->begin() == entry;
@@ -540,11 +539,14 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
     it->entry_ = it->page_->begin();
     return it;
   }
-  
+
+  iterator end() { return {nullptr, {nullptr, this}}; }
+  const iterator end() const { return {nullptr, nullptr, this}; }
+
  private:
 
   /*
-   * GetMinSubtree
+   * GetMinSubtree //TODO duplication here and in the iterator
    */
   LeafNode*
   GetMinSubtree(PathVertex v) //TODO Better interface here..
@@ -589,23 +591,27 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
 
   class PageIterator : public PageIteratorBase<LeafNode, Table> {
     public:
-      using PageIteratorBase<LeafNode, Table>::page_;
-      using PageIteratorBase<LeafNode, Table>::table_;
+      using Base = PageIteratorBase<LeafNode, Table>;
+      using Base::page_;
+      using Base::table_;
 
-      PageIterator& operator++() override {
+      PageIterator(LeafNode* leaf, Table* table) : Base(leaf, table) {}
+
+      void operator++() override {
         storage_model* model_  = table_->model_;
         PageId         rootId_ = table_->rootId_;
 
         if (page_ == nullptr)
         {
-          page_ = model_->load_page(rootId_);
+          page_ = (LeafNode*)(model_->load_page(rootId_));
+          //page_ = GetMinSubtree(PathVertex{(Page*)page_, page_->header()+1});
         }
         else
         {
-          Path searchPath = GetSearchPath(
+          Path searchPath = GetSearchPath<Key,PageId>(
               rootId_,
-              page_->begin()->key;
-              [table_](PageId pageId) { return table_->model_->load_page(pageId); }
+              page_->begin()->key,
+              [model_](PageId pageId) { return model_->load_page(pageId); }
               );
 
           auto branch = std::find_if(
@@ -620,38 +626,43 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
           }
           else
           {
-            NextChildEntry(branch);
-            while (!branch->header->IsLeaf())
-            {
-              PageId nextPage = ((InteriorEntry*)branch->childEntry)->data;
-              branch->header = table_->model_->load_page(nextPage);
-              branch->childEntry = ((InteriorPage*)branch->header)->begin();
-            }
-            page_ = branch->header;
+            //NextChildEntry(*branch.base()); TODO
+            //page_ = (LeafNode*) GetMinSubtree(*branch.base());
           }
         }
-        return *this;
       }
-      PageIterator& operator--() override {
+      Page* GetMinSubtree(PathVertex branch) {
+        while (!branch.header->IsLeaf())
+        {
+          PageId nextPage = ((InteriorEntry*)branch.childEntry)->data;
+          branch.header = table_->model_->load_page(nextPage);
+          branch.childEntry = ((InteriorNode*)branch.header)->begin();
+        }
+        return branch.header;
+      }
+      void operator--() override {
         storage_model* model_  = table_->model_;
         PageId         rootId_ = table_->rootId_;
 
         if (page_ == nullptr)
         {
-          page_ = model_->load_page(rootId_);
+          //page_ = (Page*)model_->load_page(rootId_);
+          //page_ = GetMaxSubtree(
+              //PathVertex{page_, page_->header()+1}
+              //); TODO
         }
         else
         {
-          Path searchPath = GetSearchPath(
+          Path searchPath = GetSearchPath<Key, PageId>(
               rootId_,
-              page_->begin()->key;
-              [table_](PageId pageId) { return table_->model_->load_page(pageId); }
+              page_->begin()->key,
+              [model_](PageId pageId) { return model_->load_page(pageId); }
               );
 
           auto branch = std::find_if(
               searchPath.rbegin(),
               searchPath.rend(),
-              [](const PathVertex& v) { return !IsBegin(v.childEntry, v.header); }
+              [](const PathVertex& v) { return !IsEnd(v.childEntry, v.header); }
               );
 
           if (branch == searchPath.rend())
@@ -660,39 +671,42 @@ class Btree : public HashInterface<Key, Data, HashFunction> {
           }
           else
           {
-            PrevChildEntry(branch);
-            while (!branch->header->IsLeaf())
-            {
-              PageId nextPage = ((InteriorEntry*)branch->childEntry)->data;
-              branch->header = table_->model_->load_page(nextPage);
-              branch->childEntry = --((InteriorPage*)branch->header)->end();
-            }
-            page_ = branch->header;
+            PrevChildEntry(*branch.base());
+            page_ = (LeafNode*)GetMaxSubtree(*branch.base());
           }
         }
-        return *this;
+      }
+      Page* GetMaxSubtree(PathVertex branch) {
+        while (!branch.header->IsLeaf())
+        {
+          PageId nextPage = ((InteriorEntry*)branch.childEntry)->data;
+          branch.header = (Page*)table_->model_->load_page(nextPage);
+          branch.childEntry = 
+            std::prev(((InteriorNode*)branch.header)->end());
+        }
+        return branch.header;
       }
 
      private:
 
-      void AdvanceChildEntry(PathVertex& v) {
+      void NextChildEntry(PathVertex& v) {
         if (v.header->IsLeaf())
         {
-          ++((LeafEntry*)v.childEntry);
+          std::next((LeafEntry*)v.childEntry);
         }
         else
         {
-          ++((InteriorEntry*)v.childEntry);
+          std::next((InteriorEntry*)v.childEntry);
         }
       }
       void PrevChildEntry(PathVertex& v) {
         if (v.header->IsLeaf())
         {
-          --((LeafEntry*)v.childEntry);
+          std::prev((LeafEntry*)v.childEntry);
         }
         else
         {
-          --((InteriorEntry*)v.childEntry);
+          std::prev((InteriorEntry*)v.childEntry);
         }
       }
   };

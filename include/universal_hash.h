@@ -77,12 +77,13 @@ uint16_t Hash16(uint32_t key, const UniHash16& parameters)
   return hash;
 }
 
+
 /*
  * Key -> uint64_t
  */
-template<typename Key, 
-         typename = std::enable_if_t<
-           std::is_trivially_copyable<Key>::value>
+template<typename Key//, 
+         //typename = std::enable_if_t<
+           //std::is_trivially_copyable<Key>::value>
          >
 struct UniHash {
   static_assert(sizeof(Key) >= 4 && sizeof(Key) % 4 == 0);

@@ -44,6 +44,9 @@ struct LkPageEntry {
   void   AdvanceHashIx() { ++hashIx_; }
   size_t hashIx() const { return hashIx_; }
 
+  LkPageEntry(const Key& key, const Data& data, size_t hashIx) :
+    key(key), data(data), hashIx_(hashIx) {}
+
   std::string 
   ToString() const
   {
@@ -195,7 +198,7 @@ class LkHash {
 };
 
 
-/**
+/*
  * LkTable is an honest to goodness hash table that works with a
  * LkDirectory and a storage_model to get pages.
  *
@@ -224,26 +227,21 @@ class LkHash {
 template<
   typename Key,
   typename Data,
-  typename Hash
+  template <typename> typename HashFn = UniHash,
+  template <typename> typename SigFn = UniHash
   >
-class LkTableIterator;
-
-template<
-  typename Key,
-  typename Data,
-  typename Hash = UniHash<Key>
-  >
-class LkTable : public HashInterface<Key, Data, Hash> {
+class LkTable /*: public HashInterface<Key, Data>*/ {
  public:
   using PageEntry    = LkPageEntry<Key, Data>;
   using Page         = LkPage<Key, Data>;
-  using Hash         = LkHash<Key, Data>;
+  using Hash         = LkHash<Key, Data, HashFn<Key>, SigFn<Key>>;
   using OverflowList = std::list<PageEntry>;
   using Header       = LkHeader;
-  using Table        = LkTable<Key, Data, Hash>;
+  using Table        = LkTable<Key, Data, HashFn, SigFn>;
 
   class PageIterator;
   using iterator     = TableIterator<Key, Data, LkPageEntry, PageIterator>;
+  friend iterator;
 
 
   LkTable(storage_model* model,
@@ -258,10 +256,10 @@ class LkTable : public HashInterface<Key, Data, Hash> {
      * find
      */
   iterator
-  find(const Key& key) const
+  find(const Key& key)
   {
     auto searchResult = lkHash_.Search(key, directory_);
-    if (!searchResult.first) return {false, {0,0}};
+    if (!searchResult.first) return {nullptr, {nullptr, this}};
 
     size_t pageId = searchResult.second.pageId;
     auto   page   = (Page*)model_->load_page(pageId);
@@ -271,7 +269,7 @@ class LkTable : public HashInterface<Key, Data, Hash> {
         [key](const PageEntry& e) { return e.key == key; }
     );
 
-    return {keyMatch, page, this};
+    return {keyMatch, {page, this}};
   }
     /*
      * insert
@@ -283,7 +281,7 @@ class LkTable : public HashInterface<Key, Data, Hash> {
     OverflowList pageOverflow;
     bool firstLoop = true;
 
-    Q.push_back({key, data, 0});
+    Q.emplace_back(key, data, 0);
 
     while (!Q.empty()) {
 
@@ -410,7 +408,7 @@ class LkTable : public HashInterface<Key, Data, Hash> {
     if (dirIt != directory_.begin()) 
     {
       --dirIt;
-      it.page_ = (Page*)model_->load_page(*dirIt);
+      it.page_ = (Page*)model_->load_page(dirIt->pageId);
       it.entry_ = --it.page_->end();
     }
     else
@@ -421,13 +419,23 @@ class LkTable : public HashInterface<Key, Data, Hash> {
 
     return it;
   }
+  iterator begin() {
+    if (directory_.empty()) return {nullptr, {nullptr, this}};
+    auto page = (Page*)model_->load_page(directory_.front().pageId);
+    return {page->begin(), {page, this}};
+  }
+  const iterator begin() const { return begin(); }
+  iterator end() {
+    if (directory_.empty()) return {nullptr, {nullptr, this}};
+    auto page = (Page*)model_->load_page(directory_.back().pageId);
+    return {&page->back(), {page, this}};
+  }
+  const iterator end() const { return end(); }
 
 
   inline size_t size()       const { return size_; }
   inline size_t capacity()   const { return capacity_; }
   inline double LoadFactor() const { return size_ / (double)capacity_; }
-
-  friend class LkTableIterator<Key, Data, Hash>;
 
  private:
   /*
@@ -526,13 +534,18 @@ class LkTable : public HashInterface<Key, Data, Hash> {
     return pageOverflow;
   }
 
+ public:
 
-  class PageIterator : Public PageIteratorBase<Page, Table> {
+  class PageIterator : public PageIteratorBase<Page, Table> {
     public:
-      using PageIteratorBase<LeafNode, Table>::page_;
-      using PageIteratorBase<LeafNode, Table>::table_;
+      using Base = PageIteratorBase<Page, Table>;
+      using Base::page_;
+      using Base::table_;
 
-      PageIterator& operator++() override {
+      PageIterator(Page* page, Table* table) : Base(page, table) {}
+
+
+      void operator++() override {
         storage_model* model_  = table_->model_;
         const Directory& directory_ = table_->directory_;
 
@@ -543,22 +556,22 @@ class LkTable : public HashInterface<Key, Data, Hash> {
         else if (page_ == nullptr)
         {
           dirIt = directory_.cbegin();
-          page_ = model_->load_page(dirIt->pageId);
+          page_ = (Page*)model_->load_page(dirIt->pageId);
         }
         else
         {
-          if (dirIt == directory_->cend())
+          if (dirIt == directory_.cend())
           {
             page_ = nullptr;
           }
           else
           {
-            page_ = (Page*)model_->load_page(*++dirIt);
+            ++dirIt;
+            page_ = (Page*)model_->load_page(dirIt->pageId);
           }
         }
-        return *this;
       }
-      PageIterator& operator--() override {
+      void operator--() override {
         storage_model* model_  = table_->model_;
         const Directory& directory_ = table_->directory_;
 
@@ -569,20 +582,20 @@ class LkTable : public HashInterface<Key, Data, Hash> {
         else if (page_ == nullptr)
         {
           dirIt = --directory_.cend();
-          page_ = model_->load_page(dirIt->pageId);
+          page_ = (Page*)model_->load_page(dirIt->pageId);
         }
         else
         {
-          if (dirIt == directory_->cbegin())
+          if (dirIt == directory_.cbegin())
           {
             page_ = nullptr;
           }
           else
           {
-            page_ = (Page*)model_->load_page(*--dirIt);
+            --dirIt;
+            page_ = (Page*)model_->load_page(dirIt->pageId);
           }
         }
-        return *this;
       }
 
     private:
@@ -590,6 +603,7 @@ class LkTable : public HashInterface<Key, Data, Hash> {
       Directory::const_iterator dirIt;
   };
 
+ private:
 
   storage_model* model_;
   Hash           lkHash_;

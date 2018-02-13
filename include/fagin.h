@@ -31,7 +31,7 @@ struct FaginHeader : HeaderBase {
 };
 
 template<typename Key, typename Data>
-using FaginPage = HeaderArray<FaginHeader, Entry<const Key,Data>>;
+using FaginPage = HeaderArray<FaginHeader, Entry<Key,Data>>;
 
 
 template<
@@ -110,9 +110,9 @@ class FaginDirectory {
    * DirBegin
    */
   Directory::iterator DirBegin()  { return directory_.begin(); }
-  Directory::iterator DirRBegin() { return directory_.rbegin(); }
   Directory::iterator DirEnd()    { return directory_.end(); }
-  Directory::iterator DirREnd()   { return directory_.rend(); }
+  Directory::reverse_iterator DirRBegin() { return directory_.rbegin(); }
+  Directory::reverse_iterator DirREnd()   { return directory_.rend(); }
 
  private:
 
@@ -125,15 +125,16 @@ template<
   typename Data,
   typename Hash = UniHash<Key>
   >
-class FaginTable : public HashInterface<Key,Data,Hash> {
+class FaginTable /*: public HashInterface<Key,Data>*/ {
  public:
   using Page      = FaginPage<Key, Data>;
-  using PageEntry = Entry<const Key, Data>;
+  using PageEntry = Entry<Key, Data>;
   using Header    = FaginHeader;
-  using Table     = FaginTable<Key, Hash, Data>;
+  using Table     = FaginTable<Key, Data, Hash>;
 
   class PageIterator;
-  using iterator  = TableIterator<Key, Data, Table, PageIterator>;
+  using iterator  = TableIterator<Key, Data, Entry, PageIterator>;
+  friend iterator;
 
   /*
    * FaginTable
@@ -156,12 +157,12 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
    * erase
    */
   bool
-  erase(const Key& key) override
+  erase(const Key& key) //override
   {
     PageId pageId = directory_.GetPageId(key);
     auto page = (Page*)model_->load_page(pageId);
 
-    typename Page::iterator ePoint = page->find(
+    auto ePoint = page->find(
         [key](const PageEntry& entry) { return key == entry.key; }
     );
 
@@ -176,22 +177,22 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
    * find
    */
   iterator
-  find(const Key& key) const override
+  find(const Key& key) //override
   {
     PageId pageId = directory_.GetPageId(key);
     auto page = (Page*)model_->load_page(pageId);
 
-    typename Page::iterator keyLocation = page->find(
+    auto keyLocation = page->find(
         [key](const PageEntry& entry) { return key == entry.key; }
     );
 
-    return {keyLocation, page, this};
+    return {keyLocation, PageIterator(page, this)};
   }
   /*
    * insert
    */
   void
-  insert(const Key& key, const Data& data) override
+  insert(const Key& key, const Data& data) //override
   {
     PageId pageId = directory_.GetPageId(key);
     auto page = (Page*)model_->load_page(pageId);
@@ -204,7 +205,7 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
     }
 
     auto iPoint = page->find(
-        [key] (const Entry<const Key, Data>& entry) { 
+        [key] (const Entry<Key, Data>& entry) { 
         return entry.key == key;
     });
 
@@ -223,12 +224,8 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
   /*
    * end
    */
-  iterator
-  end()
-  {
-    Page* page = model_->load_page(*--directory_->DirEnd());
-    return {page, page->end(), this};
-  }
+  iterator end() { return {nullptr, {nullptr, this}}; }
+  const iterator end() const { return {nullptr, nullptr, this}; }
 
 
   /*
@@ -263,8 +260,6 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
 
     return *this;
   }
-
-  friend class iterator;
 
  private:
 
@@ -301,32 +296,36 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
     }
   }
 
+ public:
 
-  class PageIterator : Public PageIteratorBase<Page, Table> {
+  class PageIterator : public PageIteratorBase<Page, Table> {
     public:
-      using PageIteratorBase<LeafNode, Table>::page_;
-      using PageIteratorBase<LeafNode, Table>::table_;
+      using Base = PageIteratorBase<Page, Table>;
+      using Base::page_;
+      using Base::table_;
 
-      PageIterator& operator++() override {
+      PageIterator(Page* page, Table* table) : Base(page, table) {}
+
+      void operator++() override {
         storage_model* model_  = table_->model_;
-        FaginDirectory* directory_ = table_->directory_;
+        FaginDirectory<Key,Hash>& directory_ = table_->directory_;
 
-        if (directory_->DirBegin() == directory_.DirEnd()) {
+        if (directory_.DirBegin() == directory_.DirEnd()) {
           page_ = nullptr;
         }
         else if (page_ == nullptr)
         {
-          page_ = model_->load_page(*directory_.DirBegin());
+          page_ = (Page*)model_->load_page(*directory_.DirBegin());
         }
         else
         {
           auto dirIt = NextUnique(
-              directory_->DirBegin(),
-              directory_->DirEnd(),
+              directory_.DirBegin(),
+              directory_.DirEnd(),
               page_->header()->pageId
               );
 
-          if (dirIt == directory_->DirEnd())
+          if (dirIt == directory_.DirEnd())
           {
             page_ = nullptr;
           }
@@ -335,28 +334,27 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
             page_ = (Page*)model_->load_page(*dirIt);
           }
         }
-        return *this;
       }
-      PageIterator& operator--() override {
+      void operator--() override {
         storage_model* model_  = table_->model_;
-        FaginDirectory* directory_ = table_->directory_;
+        FaginDirectory<Key,Hash>& directory_ = table_->directory_;
 
-        if (directory_->DirRBegin() == directory_.DirREnd()) {
+        if (directory_.DirRBegin() == directory_.DirREnd()) {
           page_ = nullptr;
         }
         else if (page_ == nullptr)
         {
-          page_ = model_->load_page(*directory_.DirRBegin());
+          page_ = (Page*)model_->load_page(*directory_.DirRBegin());
         }
         else
         {
           auto dirIt = NextUnique(
-              directory_->DirRBegin(),
-              directory_->DirREnd(),
+              directory_.DirRBegin(),
+              directory_.DirREnd(),
               page_->header()->pageId
               );
 
-          if (dirIt == directory_->DirREnd())
+          if (dirIt == directory_.DirREnd())
           {
             page_ = nullptr;
           }
@@ -365,7 +363,6 @@ class FaginTable : public HashInterface<Key,Data,Hash> {
             page_ = (Page*)model_->load_page(*dirIt);
           }
         }
-        return *this;
       }
  
   };
