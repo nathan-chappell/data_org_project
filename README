@@ -8,9 +8,22 @@ used with a "storage_model" (see include/storage_model.h).  The idea is
 that the storage_model represents secondary storage, and the structures
 interface with it to read and write data.
 
-The program has been written, but not checked for correctness.
+The structure "HeaderArray" is a fundamental structure to all the
+applications.  It will receive a pointer and treat it as if it were
+pointing to the header of some array, and provide some basic stl-like
+functionality to interact with it.  From this point of view, the
+responsibilities for the structures are now to just maintain an effective
+index of PageIds that the storage model can use to give a pointer back.
 
 The program needs to have a "page-cache" implemented for the implementation
-to make sense.  Basically, the "reference managers" need to put a counter
-into iterators to make sure that pages aren't released while being
-accessed...
+to make sense.  The reference managers were originally designed to fulfill
+this role.  My basic idea is that when a program asks for a page, the
+reference would be counted somewhere.  Once a page has it's count decreased
+to 0, then it is now "available" to be released.  This is something that is
+fairly orthogononal to the actual algorithms, so it hasn't been implemented
+yet, but could be done in a straightforward manner by putting the managed
+references within pageIterators and reference managers in the container
+classes.
+
+As of right now, the program has been written, but not checked for
+correctness.  Or tested.  But, that's where it is now.
